@@ -1,16 +1,35 @@
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <vector>
+
+enum class Command {
+    PING,
+    ECHO,
+    QUIT,
+   
+};
+
+
+std::vector<std::string> getMessages(std::string data);
+std::optional<Command> getCmdFromString(std::string_view string_cmd);
+std::string getReplyFromCmd(Command command);
+
 
 int main (int argc, char *argv[]) {
+
+
     
     int sock_status, bind_status;
     
@@ -82,22 +101,21 @@ int main (int argc, char *argv[]) {
     */
 
    
-    char buffer[1024];
+    char buffer[100];
     std::string full_message="";
     std::string server_msg;
 
-    std::cout<<"starting conversation with client\n\n";
-
-    while (bytes_recv != 0) {
+    std::cout<<"starting convesation with client\n\n";
+    while (true) {
         // a loop to get the full message
         while (1) {
+
             bytes_recv = recv(new_fd, buffer, sizeof(buffer)-1, 0);
             if (bytes_recv == -1) {
                 std::cout<<"error receiving";
                 exit(1);
             }
             if (bytes_recv == 0) {
-                std::cout<<"client disconnected";
                 break;
             } 
             if (buffer[bytes_recv-1] == '\n') {
@@ -106,19 +124,37 @@ int main (int argc, char *argv[]) {
             }     
             full_message.append(buffer, bytes_recv);
         }
-        
 
-        std::cout<<"Client: "<<full_message;
-        full_message = "";
-        if (bytes_recv == 0) {
+         if (bytes_recv == 0) {
             std::cout<<"client disconnected";
             break;
         } 
 
+       
+        std::vector<std::string> messages= getMessages(full_message);
+        server_msg ="";
+        for (std::string message : messages) { 
+            std::cout<<"Client: "<<message<<"\n";
+            std::optional<Command> cmd  = getCmdFromString(message);
+            if (cmd.has_value()) {
+                std::cout<<"has value";
+                server_msg += getReplyFromCmd(cmd.value());
+                server_msg += '\n';
 
+            } else {
+                server_msg += "Invalid Command";
+                server_msg +='\n';
+            }
+        }
+        full_message = "";
+
+
+
+        /*
         std::cout<<"Message: ";
         std::getline(std::cin, server_msg);
-        server_msg += '\n';
+        */
+
         if (send(new_fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
             perror("server message");
             exit(1);
@@ -138,3 +174,40 @@ int main (int argc, char *argv[]) {
 
     //shutdown doesn't free a fd, but close does
 }
+
+
+std::vector<std::string> getMessages(std::string data) {
+    std::vector<std::string> messages;
+    int start_index = 0;
+    for (int i=0; i<data.length(); i++) {
+        if (data[i] == '\n') {
+            messages.push_back(data.substr(start_index, i-start_index));
+            start_index = i+1;
+        }
+    }
+    return messages;
+}
+
+
+std::string getReplyFromCmd(Command command) {
+    switch (command) {
+        case Command::PING:
+            return "PONG";
+        case Command::ECHO:
+            return "echoing";
+        case Command::QUIT:
+            return "quitting";
+        default:
+            return "INVALID COMMAND"; 
+    }
+}
+
+
+std::optional<Command> getCmdFromString(std::string_view string_cmd) {
+    if (string_cmd == "PING") return Command::PING;
+    if (string_cmd == "ECHO") return Command::ECHO;
+    if (string_cmd == "QUIT") return Command::QUIT;
+
+    return {};
+}
+

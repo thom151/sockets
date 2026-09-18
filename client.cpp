@@ -62,6 +62,8 @@ int main(int argc, char *argv[]){
     std::cout<<"Starting conversation\n\n";
     while (true) {
 
+
+
         std::cout<<"Message: ";
         std::getline(std::cin, clientMessage);
         clientMessage += '\n';
@@ -69,6 +71,8 @@ int main(int argc, char *argv[]){
             perror("sending client message");
             exit(1);
         }
+
+
 
         while (1) {
             bytes_recv = recv(fd, server_msg, sizeof(server_msg)-1, 0);
