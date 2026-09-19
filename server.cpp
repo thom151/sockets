@@ -1,3 +1,4 @@
+#include <cassert>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -21,10 +22,16 @@ enum class Command {
    
 };
 
+struct Protocol {
+    Command cmd;
+    std::string value;
+};
+
 
 std::vector<std::string> getMessages(std::string data);
 std::optional<Command> getCmdFromString(std::string_view string_cmd);
 std::string getReplyFromCmd(Command command);
+std::optional<Protocol> parseMessage(std::string_view message);
 
 
 int main (int argc, char *argv[]) {
@@ -106,10 +113,12 @@ int main (int argc, char *argv[]) {
     std::string server_msg;
 
     std::cout<<"starting convesation with client\n\n";
-    while (true) {
+    bool connected = true;
+    while (connected) {
+
+
         // a loop to get the full message
         while (1) {
-
             bytes_recv = recv(new_fd, buffer, sizeof(buffer)-1, 0);
             if (bytes_recv == -1) {
                 std::cout<<"error receiving";
@@ -125,37 +134,41 @@ int main (int argc, char *argv[]) {
             full_message.append(buffer, bytes_recv);
         }
 
-         if (bytes_recv == 0) {
+        //client disconnected break out of the loop
+        if (bytes_recv == 0) {
             std::cout<<"client disconnected";
             break;
         } 
 
-       
+        // handle the full message of client 
         std::vector<std::string> messages= getMessages(full_message);
         server_msg ="";
         for (std::string message : messages) { 
             std::cout<<"Client: "<<message<<"\n";
-            std::optional<Command> cmd  = getCmdFromString(message);
-            if (cmd.has_value()) {
-                std::cout<<"has value";
-                server_msg += getReplyFromCmd(cmd.value());
-                server_msg += '\n';
 
+            std::optional<Protocol> protocol = parseMessage(message);
+
+            if (!protocol.has_value()) {
+                server_msg += "Invalid Command\n";
             } else {
-                server_msg += "Invalid Command";
-                server_msg +='\n';
+                switch (protocol->cmd) {
+                    case Command::PING:
+                        server_msg += "PONG\n";
+                        break;
+                    case Command::ECHO:
+                        server_msg += protocol->value;
+                        server_msg += "\n";
+                        break;
+                    case Command::QUIT:
+                        server_msg += "quitting\n";
+                        connected = false;
+                        break;
+                }
             }
         }
+
         full_message = "";
-
-
-
-        /*
-        std::cout<<"Message: ";
-        std::getline(std::cin, server_msg);
-        */
-
-        if (send(new_fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
+       if (send(new_fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
             perror("server message");
             exit(1);
         }
@@ -165,6 +178,7 @@ int main (int argc, char *argv[]) {
     }
 
  
+    //clean up function
     close(new_fd);
     close(fd);
 
@@ -210,4 +224,56 @@ std::optional<Command> getCmdFromString(std::string_view string_cmd) {
 
     return {};
 }
+
+
+std::optional<Protocol> parseMessage(std::string_view message) {
+    assert(message != "");
+    size_t space_index = message.find(' ');
+    std::string_view command_str;
+    std::string value;
+
+    if (space_index == std::string::npos) {
+        command_str = message;
+        value = "";
+    } else {
+        command_str = message.substr(0, space_index);
+        value = message.substr(space_index + 1);
+    }
+
+
+
+    std::optional<Command> cmd = getCmdFromString(command_str);
+    if (!cmd.has_value()) {
+        return {};
+    }
+
+
+    Protocol protocol;
+    switch (cmd.value()) {
+        case Command::PING:
+            if (!value.empty()) return {};
+            protocol.cmd = cmd.value();
+            return protocol;
+
+        case Command::ECHO:
+            protocol.cmd = cmd.value();
+            protocol.value = value;
+            return protocol;
+
+        case Command::QUIT:
+            if (!value.empty()) return {};
+            protocol.cmd = cmd.value();
+            return protocol;
+
+        default:
+            return {};
+
+    }
+
+
+}
+
+
+
+
 
