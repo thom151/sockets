@@ -8,12 +8,16 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <vector>
+#include <poll.h>
+
+#define FD_MAX 10
 
 enum class Command {
     PING,
@@ -27,11 +31,106 @@ struct Protocol {
     std::string value;
 };
 
+struct ClientData {
+    int fd;
+    std::string full_message;
+    
+};
+
 
 std::vector<std::string> getMessages(std::string data);
 std::optional<Command> getCmdFromString(std::string_view string_cmd);
-std::string getReplyFromCmd(Command command);
 std::optional<Protocol> parseMessage(std::string_view message);
+
+
+
+class Client {
+    private:
+        int m_fd{}, m_bytes_recv;
+        char m_buffer[100];
+        bool connected;
+        std::string m_full_message;
+        std::string m_server_msg;
+    public:
+        Client(int fd)
+            : m_fd{fd}, connected{true} {}
+    
+        void handle() {
+            
+            while (connected) {
+                //a loop to get the full message
+                while (true) {
+                    m_bytes_recv = recv(m_fd, m_buffer, sizeof(m_buffer)-1, 0);
+                    if (m_bytes_recv == -1) {
+                        perror("recv");
+                        connected = false;
+                        break;
+                    }
+
+                    if (m_bytes_recv == 0) {
+                        break;
+                    }
+
+                    if(m_buffer[m_bytes_recv-1] == '\n') {
+                        m_full_message.append(m_buffer, m_bytes_recv);
+                        break;
+                    }
+                    m_full_message.append(m_buffer, m_bytes_recv); 
+                }
+                
+                 //client disconnected break out of the loop
+                if (m_bytes_recv == 0) {
+                    std::cout<<"client disconnected";
+                    break;
+                }
+
+                if(!connected) {
+                    break;
+                }
+
+            // handle the full message of client 
+            std::vector<std::string> messages= getMessages(m_full_message);
+            m_server_msg ="";
+            for (std::string message : messages) { 
+                std::cout<<"Client: "<<message<<"\n";
+
+                std::optional<Protocol> protocol = parseMessage(message);
+
+                if (!protocol.has_value()) {
+                    m_server_msg += "Invalid Command\n";
+                } else {
+                    switch (protocol->cmd) {
+                        case Command::PING:
+                            m_server_msg += "PONG\n";
+                            break;
+                        case Command::ECHO:
+                            m_server_msg += protocol->value;
+                            m_server_msg += "\n";
+                            break;
+                        case Command::QUIT:
+                            m_server_msg += "quitting\n";
+                            connected = false;
+                            break;
+                    }
+                }
+            }
+
+           m_full_message = "";
+           if (send(m_fd, m_server_msg.c_str(), m_server_msg.length(), 0) == -1) {
+                perror("server message");
+                exit(1);
+            }
+
+            std::cout<<"\n";
+            
+        }
+
+    }
+
+    ~Client() {
+        close(m_fd);
+    }
+};
 
 
 int main (int argc, char *argv[]) {
@@ -39,7 +138,7 @@ int main (int argc, char *argv[]) {
 
     
     int sock_status, bind_status;
-    
+     
     int bytes_recv;
     struct addrinfo hints;
     struct addrinfo *res;
@@ -47,6 +146,10 @@ int main (int argc, char *argv[]) {
     struct sockaddr_storage client_addr;
     socklen_t addr_size;
 
+    struct pollfd pfds[FD_MAX];
+
+    std::vector<ClientData> clients;
+    int clients_count;
 
     memset(&hints, 0, sizeof(hints));
 
@@ -85,101 +188,109 @@ int main (int argc, char *argv[]) {
         exit(1);
     }
 
-
+   
+    pfds[0].fd = fd;
+    pfds[0].events = POLLIN;
+    int fd_count = 1;
     std::cout<<"listening \n";
     //accept 
     //here, someone will connect() to you and then once you accept() it, you guys
     //will be using a new file descriptor while the old fd will be waiting for other
     //computers that will connect()
-     addr_size = sizeof client_addr;
-    int new_fd = accept(fd, (struct sockaddr *)&client_addr, &addr_size);
-    if (new_fd==-1){
-        std::cout<<"error accepting";
-        exit(1);
-    }
+    
+    char buffer[256]; 
 
-    /*
-    std::cout<<"sending hello to client...\n";
-    std::string welcome_msg = "Hello from my simple server!\n";
-    if (send(new_fd, welcome_msg.c_str(), welcome_msg.length(), 0) == -1) {
-        std::cout << "error sending welcome message";
-        exit(1);
-    }
-    */
+    while (true) {
 
-   
-    char buffer[100];
-    std::string full_message="";
-    std::string server_msg;
-
-    std::cout<<"starting convesation with client\n\n";
-    bool connected = true;
-    while (connected) {
-
-
-        // a loop to get the full message
-        while (1) {
-            bytes_recv = recv(new_fd, buffer, sizeof(buffer)-1, 0);
-            if (bytes_recv == -1) {
-                std::cout<<"error receiving";
-                exit(1);
-            }
-            if (bytes_recv == 0) {
-                break;
-            } 
-            if (buffer[bytes_recv-1] == '\n') {
-                full_message.append(buffer, bytes_recv);
-                break;
-            }     
-            full_message.append(buffer, bytes_recv);
-        }
-
-        //client disconnected break out of the loop
-        if (bytes_recv == 0) {
-            std::cout<<"client disconnected";
-            break;
-        } 
-
-        // handle the full message of client 
-        std::vector<std::string> messages= getMessages(full_message);
-        server_msg ="";
-        for (std::string message : messages) { 
-            std::cout<<"Client: "<<message<<"\n";
-
-            std::optional<Protocol> protocol = parseMessage(message);
-
-            if (!protocol.has_value()) {
-                server_msg += "Invalid Command\n";
-            } else {
-                switch (protocol->cmd) {
-                    case Command::PING:
-                        server_msg += "PONG\n";
-                        break;
-                    case Command::ECHO:
-                        server_msg += protocol->value;
-                        server_msg += "\n";
-                        break;
-                    case Command::QUIT:
-                        server_msg += "quitting\n";
-                        connected = false;
-                        break;
-                }
-            }
-        }
-
-        full_message = "";
-       if (send(new_fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
-            perror("server message");
+        //call poll()
+        int num_events = poll(pfds, fd_count, 2500);
+    
+        if (num_events == -1) {
+            perror("poll");
             exit(1);
         }
 
-        std::cout<<"\n";
-        
-    }
+        if (num_events == 0) {
+                printf("Poll timed out\n");
+        } 
 
- 
+        //check if any events happening including acccepting clients
+        for (int i=0; i< fd_count; ++i) {
+            if (pfds[i].revents & POLLIN) {
+                if (pfds[i].fd == fd) {
+                    //accept clients
+                    addr_size = sizeof client_addr;
+                    int new_fd = accept(fd, (struct sockaddr *)&client_addr, &addr_size);
+                    if (new_fd==-1){
+                        std::cout<<"error accepting";
+                        exit(1);
+                    }
+
+                    pfds[fd_count].fd = new_fd;
+                    pfds[fd_count].events = POLLIN;
+                    fd_count++;
+
+                    ClientData client{new_fd, ""};
+                    clients.emplace_back(client);
+                    clients_count++;
+
+                } else {
+                    //recv from client
+                    int bytes_recv = recv(pfds[i].fd, buffer, sizeof(buffer)-1,0);
+
+                      if (bytes_recv == -1) {
+                        perror("recv");
+                        break;
+                    }
+
+                    if (bytes_recv == 0) {
+                        //TODO: client disconnected so, remove them from pfds
+                        break;
+                    }
+                    
+                    clients[i-1].full_message.append(buffer, bytes_recv);
+                    if (buffer[bytes_recv-1] == '\n') {
+                        std::string server_msg ="";
+                        std::vector<std::string> messages = getMessages(clients[i-1].full_message);
+                        for(std::string message: messages) {
+                            std::optional<Protocol> protocol = parseMessage(message);
+                            if (!protocol.has_value()) {
+                                server_msg += "Invalid Command\n";
+                            } else {
+                                switch (protocol->cmd) {
+                                    case Command::PING:
+                                        server_msg += "PONG\n";
+                                        break;
+                                    case Command::ECHO:
+                                        server_msg += protocol->value;
+                                        server_msg += "\n";
+                                        break;
+                                    case Command::QUIT:
+                                        server_msg += "quitting\n";
+                                        break;                                
+                                }
+                                
+                            }
+                        }
+                        clients[i-1].full_message = "";
+                        if (send(pfds[i].fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
+                            perror("server send()");
+                            exit(1);
+                        }
+
+                    }
+
+
+
+                    //send data
+                }
+            }
+
+        }
+        
+    } 
+    
     //clean up function
-    close(new_fd);
     close(fd);
 
     
@@ -203,18 +314,7 @@ std::vector<std::string> getMessages(std::string data) {
 }
 
 
-std::string getReplyFromCmd(Command command) {
-    switch (command) {
-        case Command::PING:
-            return "PONG";
-        case Command::ECHO:
-            return "echoing";
-        case Command::QUIT:
-            return "quitting";
-        default:
-            return "INVALID COMMAND"; 
-    }
-}
+
 
 
 std::optional<Command> getCmdFromString(std::string_view string_cmd) {
