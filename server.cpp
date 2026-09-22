@@ -34,7 +34,7 @@ struct Protocol {
 struct ClientData {
     int fd;
     std::string full_message;
-    std::string server_message;
+    std::string server_msg;
     
 };
 
@@ -150,7 +150,6 @@ int main (int argc, char *argv[]) {
     struct pollfd pfds[FD_MAX];
 
     std::vector<ClientData> clients;
-    int clients_count;
 
     memset(&hints, 0, sizeof(hints));
 
@@ -231,9 +230,8 @@ int main (int argc, char *argv[]) {
                     pfds[fd_count].events = POLLIN;
                     fd_count++;
 
-                    ClientData client{new_fd, ""};
+                    ClientData client{new_fd, "", ""};
                     clients.emplace_back(client);
-                    clients_count++;
 
                 } else {
                     //recv from client
@@ -245,7 +243,6 @@ int main (int argc, char *argv[]) {
                     }
 
                     if (bytes_recv == 0) {
-                        //TODO: client disconnected so, remove them from pfds
                         std::string disconnect_message = "disconnected";
                           if (send(pfds[i].fd, disconnect_message.c_str(), disconnect_message.length(), 0) == -1) {
                             perror("server send() disconnect");
@@ -256,7 +253,7 @@ int main (int argc, char *argv[]) {
                         close(pfds[i].fd);
 
                         //remove pfds[i] (swapping with last)
-                        pfds[i].fd = pfds[fd_count-1].fd;
+                        pfds[i] = pfds[fd_count-1];
 
                         //remove clients[i-1]; (swapping with last)
                         clients[i-1] = clients[fd_count-2];
@@ -270,25 +267,27 @@ int main (int argc, char *argv[]) {
                     }
                     
                     clients[i-1].full_message.append(buffer, bytes_recv);
-                    if (buffer[bytes_recv-1] == '\n') {
-                        std::string server_msg ="";
+                    if (buffer[bytes_recv-1] == '\n') { 
+
                         bool disconnect = false;
                         std::vector<std::string> messages = getMessages(clients[i-1].full_message);
                         for(std::string message: messages) {
                             std::optional<Protocol> protocol = parseMessage(message);
                             if (!protocol.has_value()) {
-                                server_msg += "Invalid Command\n";
+                                clients[i-1].server_msg += "Invalid Command\n";
+                                pfds[i].events |= POLLOUT;
                             } else {
                                 switch (protocol->cmd) {
                                     case Command::PING:
-                                        server_msg += "PONG\n";
+                                        clients[i-1].server_msg += "PONG\n";
+                                        pfds[i].events |= POLLOUT;
                                         break;
                                     case Command::ECHO:
-                                        server_msg += protocol->value;
-                                        server_msg += "\n";
+                                        clients[i-1].server_msg += protocol->value;
+                                        clients[i-1].server_msg += "\n";
+                                        pfds[i].events |= POLLOUT;
                                         break;
                                     case Command::QUIT:
-                                        server_msg += "quitting\n";
                                         disconnect = true;
                                         break;                                
                                 }
@@ -296,10 +295,27 @@ int main (int argc, char *argv[]) {
                             }
                         }
                         clients[i-1].full_message = "";
-                        if (send(pfds[i].fd, server_msg.c_str(), server_msg.length(), 0) == -1) {
+
+
+                        /*
+                        // if (pfds[i].revent && POLLOUT) to this:
+                        int bytes_sent = send(pfds[i].fd, clients[i-1].server_msg.c_str(), clients[i-1].server_msg.length(), 0);
+                        if (bytes_sent== -1) {
                             perror("server send()");
                             exit(1);
                         }
+
+                        if (bytes_sent < clients[i-1].server_msg.length()) {
+                            //update the server msg to the remaining bytes
+                            clients[i-1].server_msg = clients[i-1].server_msg.substr(bytes_sent);
+                            pfds[i].events |= POLLOUT;
+                        } else if (bytes_sent == clients[i-1].server_msg.length()) {
+                            clients[i-1].server_msg = "";
+                            pfds[i].events &= ~POLLOUT;
+                        }
+                        */
+
+                        
 
                         //handle disconnect
                         if(disconnect) {
@@ -307,7 +323,7 @@ int main (int argc, char *argv[]) {
                             close(pfds[i].fd);
 
                             //remove pfds[i] (swapping with last)
-                            pfds[i].fd = pfds[fd_count-1].fd;
+                            pfds[i] = pfds[fd_count-1];
 
                             //remove clients[i-1]; (swapping with last)
                             clients[i-1] = clients[fd_count-2];
@@ -316,9 +332,26 @@ int main (int argc, char *argv[]) {
 
                             //checl the swapped fd
                             i--; 
+                            continue;
                         }
                     }
 
+                }
+            }
+
+            if (pfds[i].revents & POLLOUT) {
+                int bytes_sent = send(pfds[i].fd, clients[i-1].server_msg.c_str(), clients[i-1].server_msg.length(), 0);
+                if (bytes_sent== -1) {
+                    perror("server send()");
+                    exit(1);
+                }
+
+               if (bytes_sent < clients[i-1].server_msg.length()) {
+                    //update the server msg to the remaining bytes
+                    clients[i-1].server_msg = clients[i-1].server_msg.substr(bytes_sent);
+                } else if (bytes_sent == clients[i-1].server_msg.length()) {
+                    clients[i-1].server_msg = "";
+                    pfds[i].events &= ~POLLOUT;
                 }
             }
 
