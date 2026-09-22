@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,103 +36,16 @@ struct ClientData {
     int fd;
     std::string full_message;
     std::string server_msg;
+    bool disconnect_after_send;
     
 };
 
 
-std::vector<std::string> getMessages(std::string data);
 std::optional<Command> getCmdFromString(std::string_view string_cmd);
 std::optional<Protocol> parseMessage(std::string_view message);
 
 
 
-class Client {
-    private:
-        int m_fd{}, m_bytes_recv;
-        char m_buffer[100];
-        bool connected;
-        std::string m_full_message;
-        std::string m_server_msg;
-    public:
-        Client(int fd)
-            : m_fd{fd}, connected{true} {}
-    
-        void handle() {
-            
-            while (connected) {
-                //a loop to get the full message
-                while (true) {
-                    m_bytes_recv = recv(m_fd, m_buffer, sizeof(m_buffer)-1, 0);
-                    if (m_bytes_recv == -1) {
-                        perror("recv");
-                        connected = false;
-                        break;
-                    }
-
-                    if (m_bytes_recv == 0) {
-                        break;
-                    }
-
-                    if(m_buffer[m_bytes_recv-1] == '\n') {
-                        m_full_message.append(m_buffer, m_bytes_recv);
-                        break;
-                    }
-                    m_full_message.append(m_buffer, m_bytes_recv); 
-                }
-                
-                 //client disconnected break out of the loop
-                if (m_bytes_recv == 0) {
-                    std::cout<<"client disconnected";
-                    break;
-                }
-
-                if(!connected) {
-                    break;
-                }
-
-            // handle the full message of client 
-            std::vector<std::string> messages= getMessages(m_full_message);
-            m_server_msg ="";
-            for (std::string message : messages) { 
-                std::cout<<"Client: "<<message<<"\n";
-
-                std::optional<Protocol> protocol = parseMessage(message);
-
-                if (!protocol.has_value()) {
-                    m_server_msg += "Invalid Command\n";
-                } else {
-                    switch (protocol->cmd) {
-                        case Command::PING:
-                            m_server_msg += "PONG\n";
-                            break;
-                        case Command::ECHO:
-                            m_server_msg += protocol->value;
-                            m_server_msg += "\n";
-                            break;
-                        case Command::QUIT:
-                            m_server_msg += "quitting\n";
-                            connected = false;
-                            break;
-                    }
-                }
-            }
-
-           m_full_message = "";
-           if (send(m_fd, m_server_msg.c_str(), m_server_msg.length(), 0) == -1) {
-                perror("server message");
-                exit(1);
-            }
-
-            std::cout<<"\n";
-            
-        }
-
-    }
-
-    ~Client() {
-        close(m_fd);
-    }
-};
 
 
 int main (int argc, char *argv[]) {
@@ -230,7 +144,7 @@ int main (int argc, char *argv[]) {
                     pfds[fd_count].events = POLLIN;
                     fd_count++;
 
-                    ClientData client{new_fd, "", ""};
+                    ClientData client{new_fd, "", "", false};
                     clients.emplace_back(client);
 
                 } else {
@@ -243,98 +157,55 @@ int main (int argc, char *argv[]) {
                     }
 
                     if (bytes_recv == 0) {
-                        std::string disconnect_message = "disconnected";
-                          if (send(pfds[i].fd, disconnect_message.c_str(), disconnect_message.length(), 0) == -1) {
-                            perror("server send() disconnect");
-                            exit(1);
-                        }
+                           close(pfds[i].fd);
 
-                        //close fd
-                        close(pfds[i].fd);
+                        pfds[i] = pfds[fd_count - 1];
+                        clients[i - 1] = clients[fd_count - 2];
 
-                        //remove pfds[i] (swapping with last)
-                        pfds[i] = pfds[fd_count-1];
-
-                        //remove clients[i-1]; (swapping with last)
-                        clients[i-1] = clients[fd_count-2];
                         clients.pop_back();
                         fd_count--;
 
-                        //checl the swapped fd
-                        i--; 
-
+                        i--;
                         continue;
                     }
                     
                     clients[i-1].full_message.append(buffer, bytes_recv);
-                    if (buffer[bytes_recv-1] == '\n') { 
 
-                        bool disconnect = false;
-                        std::vector<std::string> messages = getMessages(clients[i-1].full_message);
-                        for(std::string message: messages) {
-                            std::optional<Protocol> protocol = parseMessage(message);
-                            if (!protocol.has_value()) {
-                                clients[i-1].server_msg += "Invalid Command\n";
-                                pfds[i].events |= POLLOUT;
-                            } else {
-                                switch (protocol->cmd) {
-                                    case Command::PING:
-                                        clients[i-1].server_msg += "PONG\n";
-                                        pfds[i].events |= POLLOUT;
-                                        break;
-                                    case Command::ECHO:
-                                        clients[i-1].server_msg += protocol->value;
-                                        clients[i-1].server_msg += "\n";
-                                        pfds[i].events |= POLLOUT;
-                                        break;
-                                    case Command::QUIT:
-                                        disconnect = true;
-                                        break;                                
-                                }
-                                
-                            }
-                        }
-                        clients[i-1].full_message = "";
-
-
-                        /*
-                        // if (pfds[i].revent && POLLOUT) to this:
-                        int bytes_sent = send(pfds[i].fd, clients[i-1].server_msg.c_str(), clients[i-1].server_msg.length(), 0);
-                        if (bytes_sent== -1) {
-                            perror("server send()");
-                            exit(1);
-                        }
-
-                        if (bytes_sent < clients[i-1].server_msg.length()) {
-                            //update the server msg to the remaining bytes
-                            clients[i-1].server_msg = clients[i-1].server_msg.substr(bytes_sent);
-                            pfds[i].events |= POLLOUT;
-                        } else if (bytes_sent == clients[i-1].server_msg.length()) {
-                            clients[i-1].server_msg = "";
-                            pfds[i].events &= ~POLLOUT;
-                        }
-                        */
-
+                    size_t newline_pos = clients[i-1].full_message.find('\n');
+                    while (newline_pos != std::string::npos) {
+                        std::string message = clients[i-1].full_message.substr(0, newline_pos);
+                        clients[i-1].full_message.erase(0, newline_pos+1);
                         
-
-                        //handle disconnect
-                        if(disconnect) {
-                            //close fd
-                            close(pfds[i].fd);
-
-                            //remove pfds[i] (swapping with last)
-                            pfds[i] = pfds[fd_count-1];
-
-                            //remove clients[i-1]; (swapping with last)
-                            clients[i-1] = clients[fd_count-2];
-                            clients.pop_back();
-                            fd_count--;
-
-                            //checl the swapped fd
-                            i--; 
-                            continue;
+                        std::optional<Protocol> protocol = parseMessage(message);
+                        if (!protocol.has_value()) {
+                            clients[i-1].server_msg += "Invalid Command\n";
+                            pfds[i].events |= POLLOUT;
+                        } else {
+                            switch (protocol->cmd) {
+                                case Command::PING:
+                                    clients[i-1].server_msg += "PONG\n";
+                                    pfds[i].events |= POLLOUT;
+                                    break;
+                                case Command::ECHO:
+                                    clients[i-1].server_msg += protocol->value;
+                                    clients[i-1].server_msg += "\n";
+                                    pfds[i].events |= POLLOUT;
+                                    break;
+                                case Command::QUIT:
+                                    clients[i-1].server_msg += "BYE!\n";
+                                    clients[i-1].disconnect_after_send = true;
+                                    pfds[i].events |= POLLOUT;
+                                    break;                                
+                            }
+                            
                         }
-                    }
+
+                        if (clients[i-1].disconnect_after_send) {
+                            break;
+                        }
+                        newline_pos = clients[i-1].full_message.find('\n');
+
+                    } 
 
                 }
             }
@@ -352,6 +223,24 @@ int main (int argc, char *argv[]) {
                 } else if (bytes_sent == clients[i-1].server_msg.length()) {
                     clients[i-1].server_msg = "";
                     pfds[i].events &= ~POLLOUT;
+
+
+                    if (clients[i-1].disconnect_after_send) {
+                        close(pfds[i].fd);
+
+                        //remove pfds[i] (swapping with last)
+                        pfds[i] = pfds[fd_count-1];
+
+                        //remove clients[i-1]; (swapping with last)
+                        clients[i-1] = clients[fd_count-2];
+                        clients.pop_back();
+                        fd_count--;
+
+                        //checl the swapped fd
+                        i--; 
+                        continue;
+
+                    }
                 }
             }
 
@@ -370,20 +259,6 @@ int main (int argc, char *argv[]) {
 }
 
 
-std::vector<std::string> getMessages(std::string data) {
-    std::vector<std::string> messages;
-    int start_index = 0;
-    for (int i=0; i<data.length(); i++) {
-        if (data[i] == '\n') {
-            messages.push_back(data.substr(start_index, i-start_index));
-            start_index = i+1;
-        }
-    }
-    return messages;
-}
-
-
-
 
 
 std::optional<Command> getCmdFromString(std::string_view string_cmd) {
@@ -396,7 +271,6 @@ std::optional<Command> getCmdFromString(std::string_view string_cmd) {
 
 
 std::optional<Protocol> parseMessage(std::string_view message) {
-    assert(message != "");
     size_t space_index = message.find(' ');
     std::string_view command_str;
     std::string value;
