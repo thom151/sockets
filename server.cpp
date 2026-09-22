@@ -34,6 +34,7 @@ struct Protocol {
 struct ClientData {
     int fd;
     std::string full_message;
+    std::string server_message;
     
 };
 
@@ -245,12 +246,33 @@ int main (int argc, char *argv[]) {
 
                     if (bytes_recv == 0) {
                         //TODO: client disconnected so, remove them from pfds
-                        break;
+                        std::string disconnect_message = "disconnected";
+                          if (send(pfds[i].fd, disconnect_message.c_str(), disconnect_message.length(), 0) == -1) {
+                            perror("server send() disconnect");
+                            exit(1);
+                        }
+
+                        //close fd
+                        close(pfds[i].fd);
+
+                        //remove pfds[i] (swapping with last)
+                        pfds[i].fd = pfds[fd_count-1].fd;
+
+                        //remove clients[i-1]; (swapping with last)
+                        clients[i-1] = clients[fd_count-2];
+                        clients.pop_back();
+                        fd_count--;
+
+                        //checl the swapped fd
+                        i--; 
+
+                        continue;
                     }
                     
                     clients[i-1].full_message.append(buffer, bytes_recv);
                     if (buffer[bytes_recv-1] == '\n') {
                         std::string server_msg ="";
+                        bool disconnect = false;
                         std::vector<std::string> messages = getMessages(clients[i-1].full_message);
                         for(std::string message: messages) {
                             std::optional<Protocol> protocol = parseMessage(message);
@@ -267,6 +289,7 @@ int main (int argc, char *argv[]) {
                                         break;
                                     case Command::QUIT:
                                         server_msg += "quitting\n";
+                                        disconnect = true;
                                         break;                                
                                 }
                                 
@@ -278,11 +301,24 @@ int main (int argc, char *argv[]) {
                             exit(1);
                         }
 
+                        //handle disconnect
+                        if(disconnect) {
+                            //close fd
+                            close(pfds[i].fd);
+
+                            //remove pfds[i] (swapping with last)
+                            pfds[i].fd = pfds[fd_count-1].fd;
+
+                            //remove clients[i-1]; (swapping with last)
+                            clients[i-1] = clients[fd_count-2];
+                            clients.pop_back();
+                            fd_count--;
+
+                            //checl the swapped fd
+                            i--; 
+                        }
                     }
 
-
-
-                    //send data
                 }
             }
 
