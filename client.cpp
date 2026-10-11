@@ -7,8 +7,52 @@
 #include <netdb.h>
 #include <cstdlib>
 #include <unistd.h>
+#include <fstream>
 
 #define PORT "3490"
+
+std::string getHostname() {
+    char hostname[256];
+
+    if (gethostname(hostname, sizeof(hostname)) == -1) {
+        perror("gethostname");
+        exit(1);
+    }
+
+    return std::string(hostname);
+}
+
+double getUptime() {
+    std::ifstream uptime_file("/proc/uptime");
+
+    if (!uptime_file.is_open()) {
+        std::cerr << "Failed to open /proc/uptime\n";
+        return -1;
+    }
+
+    double uptime;
+    uptime_file >> uptime;
+
+    return uptime;
+}
+
+
+void readSSHLogs() {
+    FILE *pipe = popen("journalctl -t sshd --since \"10 minutes ago\" --no-pager", "r");
+    
+    if (pipe == nullptr) {
+        perror("popen");
+        return;
+    }
+
+    char buffer[1024];
+
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        std::cout<<buffer;
+    }
+
+    pclose(pipe);
+}
 
 int main(int argc, char *argv[]){
     if (argc != 2) {
@@ -60,9 +104,23 @@ int main(int argc, char *argv[]){
    
 
     std::cout<<"Starting conversation\n\n";
+    
+    std::string hostname_msg = "HOSTNAME " + getHostname() + "\n";
+    std::string uptime_msg = "UPTIME " + std::to_string(getUptime()) + "\n";
+
+    if (send(fd, hostname_msg.c_str(), hostname_msg.length(), 0)== -1) {
+        perror("sending client message");
+        exit(1);
+    }
+    if (send(fd, uptime_msg.c_str(), uptime_msg.length(), 0)== -1) {
+        perror("sending client message");
+        exit(1);
+    }
+
+
     while (true) {
 
-
+        readSSHLogs();
 
         std::cout<<"Message: ";
         std::getline(std::cin, clientMessage);

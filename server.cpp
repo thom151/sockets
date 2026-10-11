@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <netinet/in.h>
 #include <optional>
 #include <string>
@@ -24,7 +25,8 @@ enum class Command {
     PING,
     ECHO,
     QUIT,
-   
+    HOSTNAME,
+    UPTIME, 
 };
 
 struct Protocol {
@@ -190,6 +192,11 @@ int main (int argc, char *argv[]) {
                                     clients[i-1].server_msg += protocol->value;
                                     clients[i-1].server_msg += "\n";
                                     pfds[i].events |= POLLOUT;
+                                    break;       
+                                case Command::HOSTNAME:
+                                case Command::UPTIME:
+                                    std::cout<<"Client "<<std::to_string(i-1)<<" "<<protocol->value<<"\n";
+                                    pfds[i].events |= POLLOUT;
                                     break;
                                 case Command::QUIT:
                                     clients[i-1].server_msg += "BYE!\n";
@@ -265,7 +272,8 @@ std::optional<Command> getCmdFromString(std::string_view string_cmd) {
     if (string_cmd == "PING") return Command::PING;
     if (string_cmd == "ECHO") return Command::ECHO;
     if (string_cmd == "QUIT") return Command::QUIT;
-
+    if (string_cmd == "HOSTNAME") return Command::HOSTNAME;
+    if (string_cmd == "UPTIME") return Command::UPTIME;
     return {};
 }
 
@@ -303,10 +311,18 @@ std::optional<Protocol> parseMessage(std::string_view message) {
             protocol.value = value;
             return protocol;
 
+        case Command::HOSTNAME:
+        case Command::UPTIME:
+            if (value.empty()) return {};
+            protocol.cmd = cmd.value();
+            protocol.value = value;
+            return protocol;
+
         case Command::QUIT:
             if (!value.empty()) return {};
             protocol.cmd = cmd.value();
             return protocol;
+           
 
         default:
             return {};
