@@ -4,10 +4,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <netinet/in.h>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <sys/poll.h>
@@ -27,6 +29,7 @@ enum class Command {
     QUIT,
     HOSTNAME,
     UPTIME, 
+    SSH_FAILED,
 };
 
 struct Protocol {
@@ -38,6 +41,7 @@ struct ClientData {
     int fd;
     std::string full_message;
     std::string server_msg;
+    std::string hostname;
     bool disconnect_after_send;
     
 };
@@ -46,14 +50,34 @@ struct ClientData {
 std::optional<Command> getCmdFromString(std::string_view string_cmd);
 std::optional<Protocol> parseMessage(std::string_view message);
 
+std::string handle_ssh_failed_logs(std::string event, std::string host) {
+    std::string log;
+    std::istringstream stream(event);
 
+    std::string timestamp;
+    std::string username;
+    std::string source_ip;
+
+    if(stream >> timestamp >> username >> source_ip) {
+        log = "\n--SSH FAILED LOGIN--\n";
+        log += "Host: " + host +'\n';
+        log += "Time: " + timestamp +'\n';
+        log += "User: " + username + '\n';
+        log += "Source IP: " + source_ip +"\n\n";
+    }
+
+    return log;
+
+}
 
 
 
 int main (int argc, char *argv[]) {
 
 
-    
+    std::ofstream log_file("ssh_events.log", std::ios::app);
+    std::string log;
+
     int sock_status, bind_status;
      
     int bytes_recv;
@@ -127,7 +151,7 @@ int main (int argc, char *argv[]) {
         }
 
         if (num_events == 0) {
-                printf("Poll timed out\n");
+            std::cout<<"Poll timed out\n";
         } 
 
         //check if any events happening including acccepting clients
@@ -139,6 +163,7 @@ int main (int argc, char *argv[]) {
                     int new_fd = accept(fd, (struct sockaddr *)&client_addr, &addr_size);
                     if (new_fd==-1){
                         std::cout<<"error accepting";
+                printf("Poll timed out\n");
                         exit(1);
                     }
 
@@ -146,7 +171,7 @@ int main (int argc, char *argv[]) {
                     pfds[fd_count].events = POLLIN;
                     fd_count++;
 
-                    ClientData client{new_fd, "", "", false};
+                    ClientData client{new_fd,"", "", "", false};
                     clients.emplace_back(client);
 
                 } else {
@@ -193,16 +218,27 @@ int main (int argc, char *argv[]) {
                                     clients[i-1].server_msg += "\n";
                                     pfds[i].events |= POLLOUT;
                                     break;       
+                                case Command::SSH_FAILED:
+                                    log = handle_ssh_failed_logs(protocol->value, clients[i-1].hostname);
+                                    std::cout << log; 
+                                    if (!log.empty()) {
+                                      log_file << log << '\n';
+                                      log_file.flush();
+                                    }
+                                    break;
                                 case Command::HOSTNAME:
+                                    clients[i-1].hostname = protocol->value;
+                                    break;
                                 case Command::UPTIME:
                                     std::cout<<"Client "<<std::to_string(i-1)<<" "<<protocol->value<<"\n";
-                                    pfds[i].events |= POLLOUT;
+                                    //pfds[i].events |= POLLOUT;
                                     break;
-                                case Command::QUIT:
+                               case Command::QUIT:
                                     clients[i-1].server_msg += "BYE!\n";
                                     clients[i-1].disconnect_after_send = true;
                                     pfds[i].events |= POLLOUT;
-                                    break;                                
+                                    break;                               
+
                             }
                             
                         }
@@ -274,6 +310,7 @@ std::optional<Command> getCmdFromString(std::string_view string_cmd) {
     if (string_cmd == "QUIT") return Command::QUIT;
     if (string_cmd == "HOSTNAME") return Command::HOSTNAME;
     if (string_cmd == "UPTIME") return Command::UPTIME;
+    if (string_cmd == "SSH_FAILED") return Command::SSH_FAILED;
     return {};
 }
 
@@ -317,7 +354,12 @@ std::optional<Protocol> parseMessage(std::string_view message) {
             protocol.cmd = cmd.value();
             protocol.value = value;
             return protocol;
-
+        
+        case Command::SSH_FAILED:
+            if (value.empty()) return {};
+            protocol.cmd = cmd.value();
+            protocol.value = value;
+            return protocol;
         case Command::QUIT:
             if (!value.empty()) return {};
             protocol.cmd = cmd.value();
