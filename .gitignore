@@ -1,0 +1,18 @@
+# Compiled programs
+client
+server
+*.o
+*.out
+
+# SSH logs
+ssh_events.log
+*.log
+
+# Debugging files
+core
+core.*
+
+# Editor files
+.vscode/
+*.swp
+*.swo
