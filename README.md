@@ -1,5 +1,5 @@
-# SECURITY MONITORING AGENT
-A simple linux monitoring agent built using C++ and TCP sockets.
+# 👮 Security Monitoring Agent & Protocol
+A simple linux monitoring agent with a simple protocol built using C++ and TCP sockets.
 
 Initially, it started as a project to learn about socket programming and networking in C++. I then expanded it to multi-way communication, then to supporting multiple clients, to designing a protocol, and SSH failed-login monitoring.
 
@@ -33,7 +33,7 @@ To view save SSH events on the server:
 
 The system consists of a client (agent) and a server (collector). The client collects system information and monitors failed SSH login attempts, while the server receives and stores the events.
 
-![System Architecture](architecture.png)
+![System Architecture](architecture.jpg)
 
 
 ## Command Protocol
@@ -49,13 +49,16 @@ A simple protocol was designed to be sent over TCP.
 
 
 Example 
+
 `
 Client: PING
 Server: PONG
-
+`
+`
 Client: ECHO hello
 Server: hello
-
+`
+`
 Client: QUIT
 Server: BYE!
 `
@@ -77,9 +80,9 @@ Source IP: 192.168.1.5
 The server listens for incoming TCP connection on port 3490.
 
 2. Start the client
-`./client <server-ip-address>
+`./client <server-ip-address>`
 
-Replace <server-ip-address> with the IP address of the machine running the server
+Replace `<server-ip-address>` with the IP address of the machine running the server
 
 3. Test communication
 Try sending:
